@@ -3,16 +3,28 @@
 Ejecutar en otra terminal, junto a la API:  python -m trabajador.main
 """
 
+import os
+import socket
 import time
 
 from app.crud import notificaciones as crud_notificaciones
 from core.database import obtener_db
 from core.registro import obtener_logger
 from trabajador.tareas import EJECUTORES
+from core.config import settings
 
 log = obtener_logger("trabajador")
-NOMBRE = "trabajador-1"
+NOMBRE = f"{socket.gethostname()}-{os.getpid()}"
 ESPERA_SEGUNDOS = 2
+
+
+def registrar_fallo(db, tarea: dict, error: str, motivo: str) -> None:
+    """Devuelve la tarea a PENDIENTE o la deja FALLIDA, y avisa a su ejecutor (RNF-24)."""
+    definitiva = crud_notificaciones.fallar_tarea(db, tarea, error)
+    log.warning("tarea %s falló (%s); definitiva=%s", tarea["_id"], motivo, definitiva)
+    al_fallar = getattr(EJECUTORES.get(tarea["tipo"]), "al_fallar", None)
+    if al_fallar:
+        al_fallar(db, tarea, definitiva)
 
 
 def ejecutar(db, tarea: dict) -> None:
@@ -25,23 +37,26 @@ def ejecutar(db, tarea: dict) -> None:
         modulo.ejecutar(db, tarea)
         crud_notificaciones.completar_tarea(db, tarea["_id"])
     except Exception as e:
-        definitiva = crud_notificaciones.fallar_tarea(db, tarea, f"{type(e).__name__}: {e}")
-        log.warning("tarea %s falló (%s); definitiva=%s", tarea["_id"], type(e).__name__, definitiva)
-        al_fallar = getattr(modulo, "al_fallar", None)
-        if al_fallar:
-            al_fallar(db, tarea, definitiva)
+        registrar_fallo(db, tarea, f"{type(e).__name__}: {e}", type(e).__name__)
+
+
+def recuperar_atascadas(db) -> None:
+    """Libera las tareas que un trabajador caído dejó en PROCESANDO."""
+    while tarea := crud_notificaciones.tomar_tarea_atascada(db, settings.minutos_tarea_atascada):
+        registrar_fallo(db, tarea, "Abandonada en PROCESANDO", "atascada")
 
 
 def ciclo():
     db = obtener_db()
-    log.info("trabajador iniciado")
+    log.info("trabajador %s iniciado", NOMBRE)
+
     while True:
+        recuperar_atascadas(db)
         tarea = crud_notificaciones.tomar_tarea(db, NOMBRE)
         if tarea is None:
             time.sleep(ESPERA_SEGUNDOS)
             continue
         ejecutar(db, tarea)
-
 
 if __name__ == "__main__":
     ciclo()

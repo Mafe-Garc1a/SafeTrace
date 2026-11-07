@@ -5,10 +5,11 @@ Documentación interactiva: http://localhost:8000/docs
 """
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
-
+from starlette.exceptions import HTTPException
 from app.router import (
     auditoria,
     auth,
@@ -29,7 +30,7 @@ from app.router import (
     usuarios,
 )
 from core.config import settings
-from core.errores import TransicionRechazada
+from core.errores import CODIGOS_HTTP, ErrorNegocio
 from core.registro import obtener_logger
 
 log = obtener_logger("api")
@@ -68,24 +69,37 @@ app.add_middleware(
     allow_headers=["*"],  # Permitir cualquier encabezado en las solicitudes
 )
 
+def respuesta_error(status: int, detail: str, codigo: str, headers: dict | None = None, **extra) -> JSONResponse:
+    """Formato único de error. `request_id` se llenará con el middleware de correlación."""
+    contenido = {"detail": detail, "codigo": codigo, "request_id": None, **extra}
+    return JSONResponse(status_code=status, content=contenido, headers=headers)
+
 
 # Errores comunes: se responden igual en todos los routers y sin filtrar detalles internos
-@app.exception_handler(TransicionRechazada)
-def transicion_rechazada(_: Request, exc: TransicionRechazada):
-    return JSONResponse(status_code=409, content={"detail": str(exc)})
+@app.exception_handler(HTTPException)
+def error_http(_: Request, exc: HTTPException):
+    return respuesta_error(exc.status_code, exc.detail, CODIGOS_HTTP.get(exc.status_code, "ERROR_HTTP"), exc.headers)
+
+
+@app.exception_handler(RequestValidationError)
+def error_validacion(_: Request, exc: RequestValidationError):
+    # Sin `input`: devolvería lo que envió el usuario, incluidas contraseñas
+    errores = [{"campo": ".".join(str(parte) for parte in e["loc"][1:]), "mensaje": e["msg"]} for e in exc.errors()]
+    return respuesta_error(422, "Datos inválidos", "VALIDACION", errores=errores)
+
+
+@app.exception_handler(ErrorNegocio)
+def error_negocio(_: Request, exc: ErrorNegocio):
+    return respuesta_error(exc.status, str(exc), exc.codigo)
 
 
 @app.exception_handler(PyMongoError)
 def error_base_datos(_: Request, exc: PyMongoError):
     log.error("Error de base de datos: %s", type(exc).__name__)
-    return JSONResponse(status_code=500, content={"detail": "Error de base de datos"})
+    return respuesta_error(500, "Error de base de datos", "ERROR_BASE_DATOS")
 
 
-@app.get("/", tags=["Sistema"])
-def read_root():
-    return {"message": "ok", "proyecto": settings.PROJECT_NAME, "version": settings.PROJECT_VERSION}
-
-
-@app.get("/salud", tags=["Sistema"])
-def salud():
-    return {"estado": "ok"}
+@app.exception_handler(Exception)
+def error_no_previsto(_: Request, exc: Exception):
+    log.error("Error no previsto: %s", type(exc).__name__, exc_info=exc)
+    return respuesta_error(500, "Error interno del servidor", "ERROR_INTERNO")
