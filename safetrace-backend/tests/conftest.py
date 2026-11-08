@@ -2,7 +2,7 @@
 
 import os
 
-os.environ["JWT_SECRET"] = "secreto-de-prueba"
+os.environ["JWT_SECRET"] = "secreto-de-prueba-con-mas-de-32-bytes"
 os.environ["CREDENCIAL_SERVICIO_N8N"] = "credencial-de-prueba"
 os.environ["ENTORNO"] = "pruebas"
 

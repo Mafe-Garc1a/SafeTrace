@@ -17,8 +17,8 @@ def ejecutar(db, tarea: dict) -> None:
     anterior = crud_bitacora.obtener_evidencia(db, analisis["evidencia_anterior_id"])
     nueva = crud_bitacora.obtener_evidencia(db, analisis["evidencia_nueva_id"])
     resultado = crud_ia_indice.comparar(
-        almacenamiento.descargar(anterior["archivo"]["ruta"]),
-        almacenamiento.descargar(nueva["archivo"]["ruta"]),
+        almacenamiento.circuito.llamar(almacenamiento.descargar, anterior["archivo"]["ruta"]),
+        almacenamiento.circuito.llamar(almacenamiento.descargar, nueva["archivo"]["ruta"]),
     )
     crud_ia_indice.guardar_resultado(db, analisis["_id"], resultado)
 

@@ -13,7 +13,8 @@ def ejecutar(db, tarea: dict) -> None:
     if usuario is None or not usuario["activo"]:
         crud_notificaciones.marcar_notificacion(db, notificacion["_id"], "FALLIDA")
         return
-    email.enviar(usuario["correo"], notificacion["tipo"], {"referencia": notificacion["referencia"]})
+    datos = {"referencia": notificacion["referencia"]}
+    email.circuito.llamar(email.enviar, usuario["correo"], notificacion["tipo"], datos)
     crud_notificaciones.marcar_notificacion(db, notificacion["_id"], "ENVIADA")
 
 

@@ -2,15 +2,16 @@
 
 import logging
 from collections.abc import Generator
+from typing import Any
 
 from bson import ObjectId
 from bson.errors import InvalidId
-from fastapi import HTTPException
 from pymongo import MongoClient
 from pymongo.database import Database
 from pymongo.errors import PyMongoError
 
 from core.config import settings
+from core.errores import IdentificadorInvalido
 
 # Configurar el módulo de logging de Python y se usa para crear un registrador de eventos (logger)
 logger = logging.getLogger(__name__)
@@ -18,13 +19,21 @@ logger = logging.getLogger(__name__)
 # Crear el cliente con configuraciones adecuadas. El cliente ya maneja un pool de conexiones,
 # así que se crea una sola vez y se reutiliza en toda la aplicación.
 # - tz_aware=True: las fechas se leen en UTC con zona horaria
+# - maxPoolSize: conexiones máximas de este proceso (MONGO_MAX_POOL_SIZE)
 # - serverSelectionTimeoutMS: tiempo máximo para encontrar el servidor antes de fallar
+# - connectTimeoutMS, socketTimeoutMS, waitQueueTimeoutMS: una base lenta falla en vez de bloquear la petición
+
 cliente: MongoClient = MongoClient(
     settings.MONGO_URI,
     tz_aware=True,
-    maxPoolSize=20,
+    maxPoolSize=settings.mongo_max_pool_size,
     serverSelectionTimeoutMS=10000,
+    connectTimeoutMS=settings.mongo_connect_timeout_ms,
+    socketTimeoutMS=settings.mongo_socket_timeout_ms,
+    waitQueueTimeoutMS=settings.mongo_wait_queue_timeout_ms,
 )
+
+
 
 
 def obtener_db() -> Database:
@@ -87,10 +96,10 @@ def a_object_id(valor) -> ObjectId:
     try:
         return ObjectId(str(valor))
     except (InvalidId, TypeError):
-        raise HTTPException(status_code=400, detail=f"Identificador inválido: {valor}") from None
+        raise IdentificadorInvalido(f"Identificador inválido: {valor}") from None
 
 
-def serializar(documento):
+def serializar(documento) -> Any:
     """Prepara un documento de MongoDB para la respuesta: `_id` pasa a `id` y los ObjectId a texto."""
     if isinstance(documento, list):
         return [serializar(d) for d in documento]

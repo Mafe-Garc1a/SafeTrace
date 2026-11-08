@@ -7,9 +7,9 @@ Documentación interactiva: http://localhost:8000/docs
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
 from starlette.exceptions import HTTPException
+
 from app.router import (
     auditoria,
     auth,
@@ -30,7 +30,8 @@ from app.router import (
     usuarios,
 )
 from core.config import settings
-from core.errores import CODIGOS_HTTP, ErrorNegocio
+from core.correlacion import ENCABEZADO, MiddlewareCorrelacion
+from core.errores import CODIGOS_HTTP, ErrorNegocio, respuesta_error
 from core.registro import obtener_logger
 
 log = obtener_logger("api")
@@ -60,6 +61,9 @@ app.include_router(enlaces.router, tags=["Enlace público"])
 app.include_router(ia_indice.router, tags=["IA e índice de priorización"])
 app.include_router(notificaciones.router, tags=["Notificaciones y procesos"])
 
+# El último middleware registrado es el más externo: la correlación debe quedar dentro de CORS
+app.add_middleware(MiddlewareCorrelacion)
+
 # Configuración de CORS para permitir todas las solicitudes desde cualquier origen
 app.add_middleware(
     CORSMiddleware,
@@ -67,12 +71,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],  # Permitir estos métodos HTTP
     allow_headers=["*"],  # Permitir cualquier encabezado en las solicitudes
+    expose_headers=[ENCABEZADO],  # El frontend puede leer el ID para reportar un error
 )
-
-def respuesta_error(status: int, detail: str, codigo: str, headers: dict | None = None, **extra) -> JSONResponse:
-    """Formato único de error. `request_id` se llenará con el middleware de correlación."""
-    contenido = {"detail": detail, "codigo": codigo, "request_id": None, **extra}
-    return JSONResponse(status_code=status, content=contenido, headers=headers)
 
 
 # Errores comunes: se responden igual en todos los routers y sin filtrar detalles internos
@@ -99,7 +99,11 @@ def error_base_datos(_: Request, exc: PyMongoError):
     return respuesta_error(500, "Error de base de datos", "ERROR_BASE_DATOS")
 
 
-@app.exception_handler(Exception)
-def error_no_previsto(_: Request, exc: Exception):
-    log.error("Error no previsto: %s", type(exc).__name__, exc_info=exc)
-    return respuesta_error(500, "Error interno del servidor", "ERROR_INTERNO")
+@app.get("/", tags=["Sistema"])
+def read_root():
+    return {"message": "ok", "proyecto": settings.PROJECT_NAME, "version": settings.PROJECT_VERSION}
+
+
+@app.get("/salud", tags=["Sistema"])
+def salud():
+    return {"estado": "ok"}
