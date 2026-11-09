@@ -1,12 +1,22 @@
-"""Controlador API REST para el Módulo J: Análisis de IA e Índice de Priorización (RF-62 a RF-68).
+"""Controlador API REST para el Módulo J: Análisis de IA e Índice de Priorización.
 
-Expone los endpoints para:
-- RF-62 / RF-63: Consulta de análisis de comparación de fotos por IA.
-- RF-64: Manejo de estados (PENDIENTE, PROCESANDO, COMPLETADO, FALLIDO) y reintento.
-- RF-65: Rotulado obligatorio con leyenda «Análisis automático mediante IA», fecha y fotografías comparadas.
-- RF-66: Índice de priorización post-sismo para inmuebles dentro del radio de afectación.
-- RF-67: Desglose de las 7 variables del cálculo del índice.
-- RF-68 / RNF-36 / RNF-37: Disclaimers éticos y legales (no es vulnerabilidad, no altera estados).
+TRAZABILIDAD ERS v2:
+- RF-62: Comparación automática mediante IA de fotografías de una misma zona estructural.
+- RF-63: Almacenamiento persistente del resultado de cada análisis en 'analisis_ia'.
+- RF-64: Manejo formal de estados (PENDIENTE, PROCESANDO, COMPLETADO, FALLIDO) y endpoint de reintento.
+- RF-65: Rotulado normativo inmutable con la leyenda «Análisis automático mediante IA», fecha y fotografías comparadas.
+- RF-66: Cálculo cuantitativo del índice de priorización tras un sismo relevante.
+- RF-67: Desglose transparente de las 7 variables constitutivas del índice:
+         1) año de construcción, 2) sistema constructivo, 3) número de pisos,
+         4) magnitud del sismo, 5) distancia epicentral en km, 6) antecedentes de daños y
+         7) fecha de la última inspección técnica.
+- RF-68: Notificación explícita de que el índice es orientativo y no constituye evaluación profesional.
+- RN-09: El índice y los resultados de IA nunca modifican por sí solos el estado del inmueble.
+- RNF-25: Eficiencia e idempotencia: una sola comparación por par único de fotografías.
+- RNF-28: Transparencia y usabilidad en la presentación de origen de evidencias.
+- RNF-35: Límites éticos de IA (no generación de información espuria).
+- RNF-36: El índice no es una medida cuantitativa definitiva de vulnerabilidad estructural.
+- RNF-37: Ningún resultado de IA ni índice de priorización muta por sí mismo el estado de un inmueble.
 """
 
 from __future__ import annotations
