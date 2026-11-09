@@ -1,12 +1,14 @@
-"""Rutas de API para el Módulo B: Peritos (RF-13 a RF-16, RNF-15, RNF-20).
+"""Controlador API REST para el Módulo B: Peritos.
 
-Expone los endpoints para:
-- RF-13: Registro del perfil profesional del perito.
-- RF-14: Carga de documentos de acreditación y matrícula.
-- RF-15: Aprobación y rechazo administrativo de credenciales.
-- RF-16: Auditoría de validación registrando validador, fecha y documentos revisados.
-- RNF-15: Inhabilitación para peritos pendientes, vencidos o inconsistentes.
-- RNF-20: Anonimización de datos sensibles en el procesamiento.
+TRAZABILIDAD ERS v2:
+- RF-13: Registro del perfil profesional del perito (POST /peritos/perfil).
+- RF-14: Carga de documentos de acreditación y matrícula (POST /peritos/documentos).
+- RF-15: Aprobación y rechazo administrativo de credenciales (POST /admin/peritos/{id}/validacion).
+- RF-16: Auditoría formal de validación registrando validador, fecha y documentos revisados.
+- RN-01: Exclusividad operativa para peritos en estado 'VALIDADO'.
+- RN-03: Integridad de la cadena documental probatoria e inmutabilidad de dictámenes.
+- RNF-15: Inhabilitación automática para inspeccionar en estados pendientes, vencidos o con inconsistencias.
+- RNF-20: Anonimización de datos sensibles en el procesamiento y registro de logs.
 """
 
 from __future__ import annotations

@@ -1,14 +1,14 @@
-"""Capa de acceso a datos y reglas de negocio para Módulo B: Peritos (RF-13 a RF-16, RNF-15, RNF-20).
+"""Capa de acceso a datos y reglas de negocio para Módulo B: Peritos.
 
-Implementa la persistencia en MongoDB y las validaciones de negocio correspondientes a:
-- RF-13: Registro del expediente profesional del perito.
+TRAZABILIDAD ERS v2:
+- RF-13: Registro del expediente profesional del perito (documento, profesión, especialidad, matrícula profesional).
 - RF-14: Incorporación de documentación probatoria de formación y matrícula.
-- RF-15: Proceso administrativo de validación (aprobación/rechazo) de credenciales.
-- RF-16: Registro de trazabilidad de validaciones (actor validador, fecha y documentos revisados).
-- RN-01: Exclusividad de asignación a peritos habilitados con credenciales validadas.
-- RN-03: Integridad de la cadena documental e inmutabilidad de dictámenes previos.
-- RNF-15: Inhabilitación automática de peritos en estados pendientes, vencidos o con inconsistencias.
-- RNF-20: Anonimización de datos personales en logs del sistema.
+- RF-15: Proceso administrativo de validación (aprobación/rechazo) de credenciales por el Administrador General.
+- RF-16: Registro de trazabilidad de validaciones (quién validó, en qué fecha y qué documentos cotejó).
+- RN-01: Exclusividad de asignación e inspección a peritos con credenciales en estado 'VALIDADO'.
+- RN-03: Integridad de la cadena documental e inmutabilidad del historial de validaciones previas.
+- RNF-15: Inhabilitación automática de peritos en estados pendientes, vencidos, rechazados o con inconsistencias.
+- RNF-20: Anonimización de datos personales (PII) en los flujos de auditoría y registros de consola/log.
 """
 
 from __future__ import annotations
@@ -43,10 +43,12 @@ ESTADO_INCONSISTENTE = "INCONSISTENTE"
 
 
 def sanitizar_log_perito(perito: dict[str, Any] | None) -> dict[str, Any]:
-    """Extrae una versión anonimizada de los datos del perito para telemetría y logs (RNF-20).
+    """Extrae una versión anonimizada de los datos del perito para telemetría y logs.
 
-    Oculta nombre, tipo/número de documento civil, correo y teléfono, preservando
-    identificadores de entidad, timestamps y estados de ciclo de vida.
+    Cumplimiento Normativo:
+        - RNF-20 (Privacidad): Suprime deliberadamente campos de datos personales (nombre completo,
+          tipo y número de documento civil, teléfono, correo) dejando únicamente identificadores
+          sistémicos (perito_id, usuario_id), metadatos técnicos y marcas temporales.
     """
     if not perito:
         return {}
@@ -63,11 +65,13 @@ def sanitizar_log_perito(perito: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def perito_habilitado_para_inspeccionar(db: Database, perito_id: str | ObjectId) -> bool:
-    """Verifica si un perito cumple los requisitos normativos para ejecutar inspecciones (RNF-15, RN-01).
+    """Verifica si un perito cumple los requisitos normativos para ejecutar inspecciones estructurales.
 
-    Regla RNF-15: No se habilita para inspeccionar a peritos con credenciales
-    pendientes de validación, vencidas, rechazadas o con inconsistencias activas.
-    Solo el estado 'VALIDADO' otorga habilitación operativa.
+    Cumplimiento Normativo:
+        - RNF-15 (Integridad): El sistema no deberá habilitar para inspeccionar a un perito
+          con credenciales pendientes de validación, vencidas o con inconsistencias.
+        - RN-01 (Habilitación exclusiva): Únicamente peritos cuyo estado sea 'VALIDADO', cuya
+          matrícula no esté vencida y sin inconsistencias activas pueden ser asignados a inspecciones.
     """
     doc = db[COLECCION_PERITOS].find_one({"_id": a_object_id(perito_id)})
     if not doc:
@@ -109,9 +113,14 @@ def registrar_perfil(
     perfil: PerfilPeritoCreate,
     usuario_actor: dict[str, Any],
 ) -> dict[str, Any]:
-    """Registra el perfil profesional inicial del perito (RF-13).
+    """Registra el perfil profesional inicial del perito.
 
-    Asigna el estado inicial 'REGISTRADO' a la espera de adjuntar soportes (RF-14).
+    Cumplimiento Normativo:
+        - RF-13: Registro obligatorio de nombre completo (vía usuario), documento de identidad (tipo y número),
+          profesión, especialidad técnica y matrícula o tarjeta profesional.
+        - RNF-15: Asigna inicialmente el estado 'REGISTRADO'; el perito aún no se encuentra habilitado
+          para inspeccionar hasta adjuntar soportes y ser validado por la administración.
+        - RNF-20: La telemetría y logs asociados son estrictamente anonimizados.
     """
     uid = a_object_id(usuario_id)
     existente = obtener_por_usuario(db, uid)
@@ -152,7 +161,14 @@ def agregar_documentos(
     datos: DocumentosPeritoCreate,
     usuario_actor: dict[str, Any],
 ) -> dict[str, Any]:
-    """Incorpora documentos de soporte probatorio y transiciona el estado a 'PENDIENTE_VALIDACION' (RF-14, RNF-15)."""
+    """Incorpora documentos de soporte probatorio y transiciona el estado de la credencial.
+
+    Cumplimiento Normativo:
+        - RF-14: Permite cargar los soportes digitales acreditando formación académica y matrícula profesional.
+        - RNF-15: Transiciona el estado a 'PENDIENTE_VALIDACION'. Durante esta fase, el perito
+          permanece inhabilitado para inspeccionar hasta la resolución administrativa formal.
+        - RN-03: Los documentos incorporan hash SHA-256 para garantizar inmutabilidad e integridad probatoria.
+    """
     uid = a_object_id(usuario_id)
     perito = obtener_por_usuario(db, uid)
     if not perito:
@@ -198,9 +214,15 @@ def validar_credencial(
     validacion: ValidacionPeritoCreate,
     usuario_validador: dict[str, Any],
 ) -> dict[str, Any]:
-    """Aprobación o rechazo administrativo de credenciales de un perito (RF-15, RF-16).
+    """Aprobación o rechazo administrativo de credenciales de un perito.
 
-    Registra la auditoría estricta de quién validó, en qué fecha y qué documentos cotejó.
+    Cumplimiento Normativo:
+        - RF-15: Permite al Administrador General aprobar ('VALIDADO') o rechazar ('RECHAZADO')
+          las credenciales presentadas.
+        - RF-16: Registra auditoría inmutable indicando quién validó (validador_id), cuándo (timestamp UTC)
+          y qué documentos específicos revisó (documentos_revisados).
+        - RN-01: Solo con decisión 'APROBADO' el perito adquiere habilitación técnica para inspecciones.
+        - RN-03: Cada dictamen se preserva en un historial append-only inmutable de validaciones.
     """
     pid = a_object_id(perito_id)
     perito = obtener_por_id(db, pid)
