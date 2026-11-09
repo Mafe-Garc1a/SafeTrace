@@ -343,6 +343,7 @@ def calcular_indice_priorizacion(
         "valor": valor_normalizado,
         "nivel_prioridad": nivel,
         "variables": variables_desglose,
+        "metadatos_variables": obtener_metadatos_variables_indice(),
         "formula_version": FORMULA_VERSION,
         "leyenda_ia": LEYENDA_OFICIAL_IA,
         "aviso_orientativo": AVISO_ORIENTATIVO_INDICE,
@@ -434,14 +435,61 @@ def listar_priorizacion_sismo(
     return items, total
 
 
+def obtener_metadatos_variables_indice() -> dict[str, dict[str, Any]]:
+    """Retorna la especificación técnica y marco normativo de las 7 variables constitutivas (RF-67).
+
+    Proporciona transparencia algorítmica sobre los factores de ponderación sismorresistente.
+    """
+    return {
+        "anio_construccion": {
+            "descripcion": "Antigüedad estructural frente a la evolución del código sismorresistente colombiano",
+            "normativa_referencia": "Decreto 1400/1984 (CCCSR-84), Ley 400/1997, NSR-98, NSR-10",
+            "impacto": "Alto para edificaciones pre-1984 sin diseño sismorresistente formal",
+        },
+        "sistema_constructivo": {
+            "descripcion": "Tipología y ductilidad estructural para disipación de energía sísmica",
+            "normativa_referencia": "Título D y E NSR-10 (Mampostería estructural y simplificada)",
+            "impacto": "Diferencial de vulnerabilidad entre mampostería no reforzada y pórticos disipativos",
+        },
+        "numero_pisos": {
+            "descripcion": "Altura de la edificación, período fundamental de vibración y masa acumulada",
+            "normativa_referencia": "Título A NSR-10 (Cálculo de fuerzas sísmicas de diseño)",
+            "impacto": "Amplificación dinámica y efectos P-Delta",
+        },
+        "magnitud_sismo": {
+            "descripcion": "Energía total liberada en la fuente sísmica (Magnitud de Momento Mw)",
+            "normativa_referencia": "Red Sismológica Nacional de Colombia (SGC)",
+            "impacto": "Excitación armónica del suelo en roca y depósito aluvial",
+        },
+        "distancia_sismo_km": {
+            "descripcion": "Distancia hipocentral/epicentral entre el foco sísmico y las coordenadas del inmueble",
+            "normativa_referencia": "Modelos de atenuación de ondas sísmicas en territorio colombiano",
+            "impacto": "Atenuación geométrica y anelástica de la aceleración pico del terreno (PGA)",
+        },
+        "antecedentes_danos_mantenimiento": {
+            "descripcion": "Historial de patologías registradas en la bitácora técnica del inmueble",
+            "normativa_referencia": "Registro de eventos del Módulo D (RF-22 a RF-27)",
+            "impacto": "Degradación de rigidez por fisuración previa no reparada o daño acumulado",
+        },
+        "fecha_ultima_revision": {
+            "descripcion": "Intervalo temporal transcurrido desde la última inspección visual o pericial",
+            "normativa_referencia": "Revisiones semestrales (Módulo E) e inspecciones técnicas (Módulo H)",
+            "impacto": "Incertidumbre acumulada sobre el estado de conservación del inmueble",
+        },
+    }
+
+
 def _calcular_distancia_haversine(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     """Calcula la distancia en kilómetros entre dos coordenadas geográficas mediante la fórmula de Haversine."""
-    r = 6371.0  # Radio de la Tierra en km
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lon2 - lon1)
+    r = 6371.0  # Radio medio de la Tierra en km
+    try:
+        phi1 = math.radians(float(lat1))
+        phi2 = math.radians(float(lat2))
+        delta_phi = math.radians(float(lat2) - float(lat1))
+        delta_lambda = math.radians(float(lon2) - float(lon1))
+    except (TypeError, ValueError):
+        return 0.0
 
     a = math.sin(delta_phi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
-    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
     return round(r * c, 2)

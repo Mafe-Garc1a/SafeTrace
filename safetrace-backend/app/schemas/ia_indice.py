@@ -142,6 +142,10 @@ class IndicePriorizacionOut(BaseModel):
         ...,
         description="Variables constitutivas del índice para total transparencia (RF-67)",
     )
+    metadatos_variables: dict[str, Any] | None = Field(
+        default=None,
+        description="Marco normativo y especificación técnica de las variables de priorización (RF-67)",
+    )
     leyenda_ia: str = Field(
         default=LEYENDA_OFICIAL_IA,
         description="Rotulado de trazabilidad algorítmica (RF-65)",
