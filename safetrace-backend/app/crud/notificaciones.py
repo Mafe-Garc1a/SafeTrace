@@ -15,6 +15,7 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.fechas import ahora
+from core.registro import request_id
 
 TIPOS_NOTIFICACION = (
     "INMUEBLE_MARCADO_POR_SISMO",
@@ -23,7 +24,6 @@ TIPOS_NOTIFICACION = (
     "RECORDATORIO_SEMESTRAL",
 )
 SEGUNDOS_ENTRE_INTENTOS = 60
-
 
 def encolar_tarea(db: Database, tipo: str, datos: dict, max_intentos: int = 3) -> ObjectId:
     """Crea una tarea PENDIENTE en la colección `tareas`. La usan todos."""
@@ -35,10 +35,12 @@ def encolar_tarea(db: Database, tipo: str, datos: dict, max_intentos: int = 3) -
                 "tipo": tipo,
                 "estado": "PENDIENTE",
                 "datos": datos,
+                "request_id": request_id.get(),
                 "intentos": 0,
                 "max_intentos": max_intentos,
                 "disponible_desde": momento,
                 "tomada_por": None,
+                "tomada_en": None,
                 "error": None,
                 "creado_en": momento,
                 "finalizada_en": None,
@@ -47,27 +49,32 @@ def encolar_tarea(db: Database, tipo: str, datos: dict, max_intentos: int = 3) -
         .inserted_id
     )
 
-
 def obtener_tarea(db: Database, tarea_id: ObjectId) -> dict | None:
     return db["tareas"].find_one({"_id": tarea_id})
-
 
 def tomar_tarea(db: Database, trabajador: str) -> dict | None:
     """Toma UNA tarea pendiente de forma atómica: dos trabajadores nunca toman la misma."""
     momento = ahora()
     return db["tareas"].find_one_and_update(
         {"estado": "PENDIENTE", "disponible_desde": {"$lte": momento}},
-        {"$set": {"estado": "PROCESANDO", "tomada_por": trabajador}, "$inc": {"intentos": 1}},
+        {"$set": {"estado": "PROCESANDO", "tomada_por": trabajador, "tomada_en": momento}, "$inc": {"intentos": 1}},
         sort=[("disponible_desde", 1), ("creado_en", 1)],
         return_document=ReturnDocument.AFTER,
     )
 
+def tomar_tarea_atascada(db: Database, minutos: int) -> dict | None:
+    """Toma UNA tarea abandonada en PROCESANDO; al renovar `tomada_en`, otro trabajador no la toma también."""
+    momento = ahora()
+    return db["tareas"].find_one_and_update(
+        {"estado": "PROCESANDO", "tomada_en": {"$lte": momento - timedelta(minutes=minutos)}},
+        {"$set": {"tomada_en": momento}},
+        return_document=ReturnDocument.AFTER,
+    )
 
 def completar_tarea(db: Database, tarea_id: ObjectId) -> None:
     db["tareas"].update_one(
         {"_id": tarea_id}, {"$set": {"estado": "COMPLETADA", "error": None, "finalizada_en": ahora()}}
     )
-
 
 def fallar_tarea(db: Database, tarea: dict, error: str) -> bool:
     """Devuelve True si la tarea quedó FALLIDA definitivamente; False si se reintentará."""
@@ -84,6 +91,15 @@ def fallar_tarea(db: Database, tarea: dict, error: str) -> bool:
     )
     return True
 
+def posponer_tarea(db: Database, tarea: dict, segundos: float) -> None:
+    """Devuelve la tarea a PENDIENTE sin gastar el intento: el problema es del proveedor, no de la tarea."""
+    db["tareas"].update_one(
+        {"_id": tarea["_id"]},
+        {
+            "$set": {"estado": "PENDIENTE", "disponible_desde": ahora() + timedelta(seconds=segundos)},
+            "$inc": {"intentos": -1},
+        },
+    )
 
 def notificar(db: Database, usuario_id: ObjectId, tipo: str, referencia: dict | None) -> ObjectId:
     """Registra la notificación y encola el correo (RF-37, RF-69, RF-70). No guarda el texto del correo."""
@@ -106,17 +122,14 @@ def notificar(db: Database, usuario_id: ObjectId, tipo: str, referencia: dict | 
     encolar_tarea(db, "ENVIAR_CORREO", {"notificacion_id": notificacion_id})
     return notificacion_id
 
-
 def obtener_notificacion(db: Database, notificacion_id: ObjectId) -> dict | None:
     return db["notificaciones"].find_one({"_id": notificacion_id})
 
-
 def marcar_notificacion(db: Database, notificacion_id: ObjectId, estado: str) -> None:
-    cambios = {"estado": estado}
+    cambios: dict = {"estado": estado}
     if estado == "ENVIADA":
         cambios["enviada_en"] = ahora()
     db["notificaciones"].update_one({"_id": notificacion_id}, {"$set": cambios})
-
 
 def listar_notificaciones(db: Database, usuario_id: ObjectId, saltar: int, limite: int) -> tuple[list[dict], int]:
     filtros = {"usuario_id": usuario_id}
