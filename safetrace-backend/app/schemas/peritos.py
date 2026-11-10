@@ -162,3 +162,4 @@ class PeritoMiEstadoOut(BaseModel):
     matricula_profesional: str
     total_documentos: int
     ultima_validacion: dict[str, Any] | None = None
+
