@@ -5,9 +5,10 @@ Documentación interactiva: http://localhost:8000/docs
 """
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
+from starlette.exceptions import HTTPException
 
 from app.router import (
     auditoria,
@@ -29,7 +30,8 @@ from app.router import (
     usuarios,
 )
 from core.config import settings
-from core.errores import TransicionRechazada
+from core.correlacion import ENCABEZADO, MiddlewareCorrelacion
+from core.errores import CODIGOS_HTTP, ErrorNegocio, respuesta_error
 from core.registro import obtener_logger
 
 log = obtener_logger("api")
@@ -59,6 +61,9 @@ app.include_router(enlaces.router, tags=["Enlace público"])
 app.include_router(ia_indice.router, tags=["IA e índice de priorización"])
 app.include_router(notificaciones.router, tags=["Notificaciones y procesos"])
 
+# El último middleware registrado es el más externo: la correlación debe quedar dentro de CORS
+app.add_middleware(MiddlewareCorrelacion)
+
 # Configuración de CORS para permitir todas las solicitudes desde cualquier origen
 app.add_middleware(
     CORSMiddleware,
@@ -66,19 +71,32 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],  # Permitir estos métodos HTTP
     allow_headers=["*"],  # Permitir cualquier encabezado en las solicitudes
+    expose_headers=[ENCABEZADO],  # El frontend puede leer el ID para reportar un error
 )
 
 
 # Errores comunes: se responden igual en todos los routers y sin filtrar detalles internos
-@app.exception_handler(TransicionRechazada)
-def transicion_rechazada(_: Request, exc: TransicionRechazada):
-    return JSONResponse(status_code=409, content={"detail": str(exc)})
+@app.exception_handler(HTTPException)
+def error_http(_: Request, exc: HTTPException):
+    return respuesta_error(exc.status_code, exc.detail, CODIGOS_HTTP.get(exc.status_code, "ERROR_HTTP"), exc.headers)
+
+
+@app.exception_handler(RequestValidationError)
+def error_validacion(_: Request, exc: RequestValidationError):
+    # Sin `input`: devolvería lo que envió el usuario, incluidas contraseñas
+    errores = [{"campo": ".".join(str(parte) for parte in e["loc"][1:]), "mensaje": e["msg"]} for e in exc.errors()]
+    return respuesta_error(422, "Datos inválidos", "VALIDACION", errores=errores)
+
+
+@app.exception_handler(ErrorNegocio)
+def error_negocio(_: Request, exc: ErrorNegocio):
+    return respuesta_error(exc.status, str(exc), exc.codigo)
 
 
 @app.exception_handler(PyMongoError)
 def error_base_datos(_: Request, exc: PyMongoError):
     log.error("Error de base de datos: %s", type(exc).__name__)
-    return JSONResponse(status_code=500, content={"detail": "Error de base de datos"})
+    return respuesta_error(500, "Error de base de datos", "ERROR_BASE_DATOS")
 
 
 @app.get("/", tags=["Sistema"])

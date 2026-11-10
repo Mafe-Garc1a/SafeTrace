@@ -5,7 +5,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt
 
 from core.config import settings
 
@@ -33,7 +33,7 @@ def verify_token(token: str) -> str | None:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         return payload.get("sub")
-    except JWTError:  # firma inválida o token vencido
+    except jwt.PyJWTError:  # firma inválida o token vencido
         return None
 
 

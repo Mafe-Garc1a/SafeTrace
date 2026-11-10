@@ -64,6 +64,7 @@ INDICES = {
     ],
     "tareas": [
         ([("estado", A), ("disponible_desde", A), ("creado_en", A)], {}),
+        ([("estado", A), ("tomada_en", A)], {}),
         (
             [("finalizada_en", A)],
             {

@@ -3,10 +3,12 @@
 Si falla, el resto de la API sigue funcionando (RNF-24).
 """
 
+from core.circuito import Circuito
 from core.config import settings
 from core.registro import obtener_logger
 
 log = obtener_logger("correo")
+circuito = Circuito("correo")
 
 
 def enviar(destinatario: str, plantilla: str, datos: dict) -> None:

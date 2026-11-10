@@ -5,7 +5,10 @@ La base de datos solo guarda la ruta y la huella SHA-256 de cada archivo.
 Si falla, el resto de la API sigue funcionando (RNF-24).
 """
 
+from core.circuito import Circuito
 from core.config import settings
+
+circuito = Circuito("archivos")
 
 
 def autorizacion_subida(ruta: str, tipo_contenido: str) -> dict:
