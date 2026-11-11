@@ -127,8 +127,8 @@ def marcar_inmuebles(db: Database, sismo: dict, radio_km: float) -> dict:
         crud_bitacora.registrar_evento_sistema(db, inmueble["_id"], sismo, distancia)
         try:
             crud_ia_indice.calcular_indice(db, inmueble["_id"], sismo, distancia)
-        except NotImplementedError:
-            pass  # pesos del índice pendientes: el marcado sigue sin el índice (RNF-24)
+        except Exception:  # el índice es orientativo: si falla, el marcado y el aviso siguen (RNF-24)
+            log.exception("no se pudo calcular el índice del inmueble %s", inmueble["_id"])
         crud_notificaciones.notificar(
             db, inmueble["propietario_id"], "INMUEBLE_MARCADO_POR_SISMO", {"tipo": "SISMO", "id": sismo["_id"]}
         )
