@@ -1,353 +1,170 @@
-"""Capa de acceso a datos y reglas de negocio para Módulo B: Peritos.
+"""Acceso a datos y reglas de B · Peritos (RF-13 a RF-16).
 
-TRAZABILIDAD ERS v2:
-- RF-13: Registro del expediente profesional del perito (documento, profesión, especialidad, matrícula profesional).
-- RF-14: Incorporación de documentación probatoria de formación y matrícula.
-- RF-15: Proceso administrativo de validación (aprobación/rechazo) de credenciales por el Administrador General.
-- RF-16: Registro de trazabilidad de validaciones (quién validó, en qué fecha y qué documentos cotejó).
-- RN-01: Exclusividad de asignación e inspección a peritos con credenciales en estado 'VALIDADO'.
-- RN-03: Integridad de la cadena documental e inmutabilidad del historial de validaciones previas.
-- RNF-15: Inhabilitación automática de peritos en estados pendientes, vencidos, rechazados o con inconsistencias.
-- RNF-20: Anonimización de datos personales (PII) en los flujos de auditoría y registros de consola/log.
+Colecciones de las que es dueño: peritos.
+
+Reglas clave:
+- Cada validación agrega un elemento a `validaciones` (quién, cuándo, documentos revisados).
+- Solo VALIDADO habilita al perito (RNF-15).
 """
 
-from __future__ import annotations
-
-import uuid
-from typing import Any
-
 from bson import ObjectId
+from pymongo import ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
-from app.schemas.peritos import (
-    DocumentosPeritoCreate,
-    PerfilPeritoCreate,
-    ValidacionPeritoCreate,
-)
-from core.database import a_object_id
+from app.crud import auditoria
+from app.schemas.peritos import DocumentoEntrada, PeritoCreate
+from core.errores import ErrorNegocio
 from core.fechas import ahora
-from core.registro import obtener_logger, registrar_evento_seguro, sanitizar_pii
-
-log = obtener_logger("crud.peritos")
-
-COLECCION_PERITOS = "peritos"
-
-# Estados válidos de la credencial profesional (RNF-15)
-ESTADO_REGISTRADO = "REGISTRADO"
-ESTADO_PENDIENTE_VALIDACION = "PENDIENTE_VALIDACION"
-ESTADO_VALIDADO = "VALIDADO"
-ESTADO_RECHAZADO = "RECHAZADO"
-ESTADO_VENCIDO = "VENCIDO"
-ESTADO_INCONSISTENTE = "INCONSISTENTE"
 
 
-def sanitizar_log_perito(perito: dict[str, Any] | None) -> dict[str, Any]:
-    """Extrae una versión anonimizada de los datos del perito para telemetría y logs.
+class PerfilDuplicado(ErrorNegocio):
+    """El usuario ya tiene perfil o la matrícula ya está registrada."""
 
-    Cumplimiento Normativo:
-        - RNF-20 (Privacidad): Suprime deliberadamente campos de datos personales (nombre completo,
-          tipo y número de documento civil, teléfono, correo) dejando únicamente identificadores
-          sistémicos (perito_id, usuario_id), metadatos técnicos y marcas temporales.
-    """
-    if not perito:
-        return {}
-    return {
-        "perito_id": str(perito.get("_id", perito.get("id", ""))),
-        "usuario_id": str(perito.get("usuario_id", "")),
-        "estado_credencial": perito.get("estado_credencial"),
-        "profesion": perito.get("profesion"),
-        "especialidad": perito.get("especialidad"),
-        "total_documentos": len(perito.get("documentos", [])),
-        "total_validaciones": len(perito.get("validaciones", [])),
-        "pii_protegida": True,
-    }
+    codigo = "PERFIL_DUPLICADO"
+    mensaje = "El perfil o la matrícula ya están registrados"
 
 
-def perito_habilitado_para_inspeccionar(db: Database, perito_id: str | ObjectId) -> bool:
-    """Verifica si un perito cumple los requisitos normativos para ejecutar inspecciones estructurales.
+class EstadoNoPermitido(ErrorNegocio):
+    """La acción no aplica en el estado actual de la credencial."""
 
-    Cumplimiento Normativo:
-        - RNF-15 (Integridad): El sistema no deberá habilitar para inspeccionar a un perito
-          con credenciales pendientes de validación, vencidas o con inconsistencias.
-        - RN-01 (Habilitación exclusiva): Únicamente peritos cuyo estado sea 'VALIDADO', cuya
-          matrícula no esté vencida y sin inconsistencias activas pueden ser asignados a inspecciones.
-    """
-    doc = db[COLECCION_PERITOS].find_one({"_id": a_object_id(perito_id)})
-    if not doc:
-        return False
-
-    estado = doc.get("estado_credencial")
-    if estado != ESTADO_VALIDADO:
-        return False
-
-    # Verificar si tiene fecha de vencimiento y si ya expiró
-    vigencia = doc.get("vigente_hasta")
-    if vigencia and vigencia < ahora():
-        return False
-
-    # Verificar que no posea inconsistencias registradas no subsanadas
-    if doc.get("motivo_inconsistencia") and estado != ESTADO_VALIDADO:
-        return False
-
-    return True
+    codigo = "ESTADO_NO_PERMITIDO"
 
 
-def obtener_por_usuario(db: Database, usuario_id: str | ObjectId) -> dict[str, Any] | None:
-    """Obtiene el expediente de perito asociado a una cuenta de usuario."""
-    uid = a_object_id(usuario_id)
-    doc = db[COLECCION_PERITOS].find_one({"usuario_id": uid})
-    if not doc and isinstance(usuario_id, str):
-        doc = db[COLECCION_PERITOS].find_one({"usuario_id": usuario_id})
-    return doc
-
-
-def obtener_por_id(db: Database, perito_id: str | ObjectId) -> dict[str, Any] | None:
-    """Obtiene un perito por su ObjectId identificador primario."""
-    return db[COLECCION_PERITOS].find_one({"_id": a_object_id(perito_id)})
-
-
-def registrar_perfil(
-    db: Database,
-    usuario_id: str | ObjectId,
-    perfil: PerfilPeritoCreate,
-    usuario_actor: dict[str, Any],
-) -> dict[str, Any]:
-    """Registra el perfil profesional inicial del perito.
-
-    Cumplimiento Normativo:
-        - RF-13: Registro obligatorio de nombre completo (vía usuario), documento de identidad (tipo y número),
-          profesión, especialidad técnica y matrícula o tarjeta profesional.
-        - RNF-15: Asigna inicialmente el estado 'REGISTRADO'; el perito aún no se encuentra habilitado
-          para inspeccionar hasta adjuntar soportes y ser validado por la administración.
-        - RNF-20: La telemetría y logs asociados son estrictamente anonimizados.
-    """
-    uid = a_object_id(usuario_id)
-    existente = obtener_por_usuario(db, uid)
-    if existente:
-        raise ValueError("PERFIL_DUPLICADO: El usuario ya posee un perfil de perito registrado")
-
-    doc = {
-        "usuario_id": uid,
-        "documento": perfil.documento.model_dump(),
-        "profesion": perfil.profesion.strip(),
-        "especialidad": perfil.especialidad.strip(),
-        "matricula_profesional": perfil.matricula_profesional.strip(),
-        "estado_credencial": ESTADO_REGISTRADO,
+def crear_perfil(db: Database, usuario_id: ObjectId, perfil: PeritoCreate) -> dict:
+    """Perfil profesional del usuario con rol PERITO (RF-13). Empieza en REGISTRADO."""
+    if db["peritos"].find_one(
+        {"$or": [{"usuario_id": usuario_id}, {"matricula_profesional": perfil.matricula_profesional}]}
+    ):
+        raise PerfilDuplicado()
+    momento = ahora()
+    documento = {
+        "usuario_id": usuario_id,
+        **perfil.model_dump(),
+        "estado_credencial": "REGISTRADO",
         "documentos": [],
         "validaciones": [],
-        "creado_en": ahora(),
-        "actualizado_en": ahora(),
-    }
-
-    try:
-        resultado = db[COLECCION_PERITOS].insert_one(doc)
-        doc["_id"] = resultado.inserted_id
-    except DuplicateKeyError as e:
-        raise ValueError("PERFIL_DUPLICADO: La matrícula profesional o usuario ya se encuentra registrado") from e
-
-    registrar_evento_seguro(
-        log,
-        "PERITO_PERFIL_REGISTRADO",
-        sanitizar_log_perito(doc),
-        nivel="info",
-    )
-    return doc
-
-
-def agregar_documentos(
-    db: Database,
-    usuario_id: str | ObjectId,
-    datos: DocumentosPeritoCreate,
-    usuario_actor: dict[str, Any],
-) -> dict[str, Any]:
-    """Incorpora documentos de soporte probatorio y transiciona el estado de la credencial.
-
-    Cumplimiento Normativo:
-        - RF-14: Permite cargar los soportes digitales acreditando formación académica y matrícula profesional.
-        - RNF-15: Transiciona el estado a 'PENDIENTE_VALIDACION'. Durante esta fase, el perito
-          permanece inhabilitado para inspeccionar hasta la resolución administrativa formal.
-        - RN-03: Los documentos incorporan hash SHA-256 para garantizar inmutabilidad e integridad probatoria.
-    """
-    uid = a_object_id(usuario_id)
-    perito = obtener_por_usuario(db, uid)
-    if not perito:
-        raise LookupError("Expediente de perito no encontrado para este usuario")
-
-    nuevos_docs: list[dict[str, Any]] = []
-    momento = ahora()
-    for d in datos.documentos:
-        doc_dict = d.model_dump()
-        doc_dict["id"] = doc_dict.get("id") or f"DOC-{uuid.uuid4().hex[:8].upper()}"
-        doc_dict["subido_en"] = momento
-        nuevos_docs.append(doc_dict)
-
-    # Regla: Al adjuntar documentos para acreditar credenciales, transiciona a PENDIENTE_VALIDACION
-    actualizado = db[COLECCION_PERITOS].find_one_and_update(
-        {"_id": perito["_id"]},
-        {
-            "$push": {"documentos": {"$each": nuevos_docs}},
-            "$set": {
-                "estado_credencial": ESTADO_PENDIENTE_VALIDACION,
-                "actualizado_en": momento,
-            },
-        },
-        return_document=True,
-    )
-
-    registrar_evento_seguro(
-        log,
-        "PERITO_DOCUMENTOS_CARGADOS",
-        {
-            "perito_id": str(perito["_id"]),
-            "documentos_nuevos": len(nuevos_docs),
-            "nuevo_estado": ESTADO_PENDIENTE_VALIDACION,
-        },
-        nivel="info",
-    )
-    return actualizado
-
-
-def validar_credencial(
-    db: Database,
-    perito_id: str | ObjectId,
-    validacion: ValidacionPeritoCreate,
-    usuario_validador: dict[str, Any],
-) -> dict[str, Any]:
-    """Aprobación o rechazo administrativo de credenciales de un perito.
-
-    Cumplimiento Normativo:
-        - RF-15: Permite al Administrador General aprobar ('VALIDADO') o rechazar ('RECHAZADO')
-          las credenciales presentadas.
-        - RF-16: Registra auditoría inmutable indicando quién validó (validador_id), cuándo (timestamp UTC)
-          y qué documentos específicos revisó (documentos_revisados).
-        - RN-01: Solo con decisión 'APROBADO' el perito adquiere habilitación técnica para inspecciones.
-        - RN-03: Cada dictamen se preserva en un historial append-only inmutable de validaciones.
-    """
-    pid = a_object_id(perito_id)
-    perito = obtener_por_id(db, pid)
-    if not perito:
-        raise LookupError("Expediente de perito no encontrado")
-
-    decision = validacion.decision.upper()
-    nuevo_estado = ESTADO_VALIDADO if decision == "APROBADO" else ESTADO_RECHAZADO
-    momento = ahora()
-
-    registro_auditoria_validacion = {
-        "validador_id": str(usuario_validador["_id"]),
-        "fecha": momento,
-        "decision": decision,
-        "documentos_revisados": validacion.documentos_revisados or [],
-        "motivo": validacion.motivo.strip() if validacion.motivo else None,
-    }
-
-    actualizaciones: dict[str, Any] = {
-        "estado_credencial": nuevo_estado,
+        "schema_version": 2,
+        "creado_en": momento,
         "actualizado_en": momento,
     }
-    if decision == "APROBADO":
-        # Limpia cualquier señalamiento previo de inconsistencia si fue subsanado y aprobado
-        actualizaciones["motivo_inconsistencia"] = None
-
-    actualizado = db[COLECCION_PERITOS].find_one_and_update(
-        {"_id": pid},
-        {
-            "$push": {"validaciones": registro_auditoria_validacion},
-            "$set": actualizaciones,
-        },
-        return_document=True,
-    )
-
-    registrar_evento_seguro(
-        log,
-        "PERITO_CREDENCIAL_VALIDADA",
-        {
-            "perito_id": str(pid),
-            "validador_id": str(usuario_validador["_id"]),
-            "decision": decision,
-            "documentos_revisados_total": len(validacion.documentos_revisados or []),
-        },
-        nivel="info",
-    )
-    return actualizado
+    try:
+        documento["_id"] = db["peritos"].insert_one(documento).inserted_id
+    except DuplicateKeyError:
+        raise PerfilDuplicado() from None
+    return documento
 
 
-def marcar_inconsistencia(
-    db: Database,
-    perito_id: str | ObjectId,
-    motivo: str,
-    usuario_actor: dict[str, Any],
-) -> dict[str, Any]:
-    """Registra una inconsistencia detectada en las credenciales del perito, inhabilitándolo (RNF-15)."""
-    pid = a_object_id(perito_id)
-    perito = obtener_por_id(db, pid)
-    if not perito:
-        raise LookupError("Expediente de perito no encontrado")
+def obtener_por_usuario(db: Database, usuario_id: ObjectId) -> dict | None:
+    return db["peritos"].find_one({"usuario_id": usuario_id})
 
+
+def obtener_perito(db: Database, perito_id: ObjectId) -> dict | None:
+    return db["peritos"].find_one({"_id": perito_id})
+
+
+def agregar_documentos(db: Database, perito: dict, documentos: list[DocumentoEntrada]) -> dict:
+    """Registra documentos ya subidos (RF-14) y deja la credencial pendiente de validación."""
     momento = ahora()
-    actualizado = db[COLECCION_PERITOS].find_one_and_update(
-        {"_id": pid},
+    siguiente = len(perito.get("documentos", [])) + 1
+    nuevos = [
         {
-            "$set": {
-                "estado_credencial": ESTADO_INCONSISTENTE,
-                "motivo_inconsistencia": motivo.strip(),
-                "actualizado_en": momento,
-            }
-        },
-        return_document=True,
+            "documento_id": f"DOC-{siguiente + i}",
+            "tipo": d.tipo,
+            "archivo": d.archivo.model_dump(),
+            "cargado_en": momento,
+        }
+        for i, d in enumerate(documentos)
+    ]
+    cambios = {"actualizado_en": momento}
+    if perito["estado_credencial"] != "VALIDADO":
+        cambios["estado_credencial"] = "PENDIENTE_VALIDACION"
+    return db["peritos"].find_one_and_update(
+        {"_id": perito["_id"]},
+        {"$push": {"documentos": {"$each": nuevos}}, "$set": cambios},
+        return_document=ReturnDocument.AFTER,
     )
 
-    registrar_evento_seguro(
-        log,
-        "PERITO_INCONSISTENCIA_MARCADA",
-        {
-            "perito_id": str(pid),
-            "actor_id": str(usuario_actor["_id"]),
-            "nuevo_estado": ESTADO_INCONSISTENTE,
-        },
-        nivel="warning",
-    )
-    return actualizado
+
+def listar_por_estado(db: Database, estado: str | None, saltar: int, limite: int) -> tuple[list[dict], int]:
+    """Lista para el administrador, por ejemplo los pendientes (RF-15)."""
+    filtros = {"estado_credencial": estado} if estado else {}
+    total = db["peritos"].count_documents(filtros)
+    datos = list(db["peritos"].find(filtros).sort("actualizado_en", 1).skip(saltar).limit(limite))
+    return datos, total
 
 
-def marcar_vencimientos(db: Database) -> int:
-    """Proceso periódico que identifica credenciales profesionales caducadas y las marca 'VENCIDO' (RNF-15)."""
+def validar(db: Database, perito_id: ObjectId, decision: str, motivo, documentos_revisados: list[str], actor: dict):
+    """Aprobar o rechazar (RF-15, RF-16). `validaciones` solo crece."""
+    perito = obtener_perito(db, perito_id)
+    if perito is None:
+        return None
+    if perito["estado_credencial"] not in ("PENDIENTE_VALIDACION", "INCONSISTENTE", "VENCIDO"):
+        raise EstadoNoPermitido(f"La credencial está en {perito['estado_credencial']}")
+    existentes = {d["documento_id"] for d in perito.get("documentos", [])}
+    faltantes = set(documentos_revisados) - existentes
+    if faltantes:
+        raise EstadoNoPermitido(f"Documentos inexistentes: {', '.join(sorted(faltantes))}")
+    nuevo_estado = "VALIDADO" if decision == "APROBADO" else "RECHAZADO"
+    return _agregar_validacion(db, perito, nuevo_estado, decision, motivo, documentos_revisados, actor)
+
+
+def marcar_inconsistente(db: Database, perito_id: ObjectId, motivo: str, actor: dict):
+    """Credenciales inconsistentes: el perito deja de estar habilitado (RNF-15)."""
+    perito = obtener_perito(db, perito_id)
+    if perito is None:
+        return None
+    return _agregar_validacion(db, perito, "INCONSISTENTE", "INCONSISTENTE", motivo, [], actor)
+
+
+def _agregar_validacion(db, perito, nuevo_estado, decision, motivo, documentos_revisados, actor):
     momento = ahora()
-    filtro = {
-        "vigente_hasta": {"$lt": momento, "$ne": None},
-        "estado_credencial": {"$nin": [ESTADO_VENCIDO, ESTADO_RECHAZADO]},
+    validacion = {
+        "decision": decision,
+        "motivo": motivo,
+        "validado_por": actor["id"],
+        "fecha": momento,
+        "documentos_revisados": documentos_revisados,
     }
-    resultado = db[COLECCION_PERITOS].update_many(
-        filtro,
-        {
-            "$set": {
-                "estado_credencial": ESTADO_VENCIDO,
-                "actualizado_en": momento,
-            }
-        },
+    actualizado = db["peritos"].find_one_and_update(
+        {"_id": perito["_id"]},
+        {"$push": {"validaciones": validacion}, "$set": {"estado_credencial": nuevo_estado, "actualizado_en": momento}},
+        return_document=ReturnDocument.AFTER,
     )
+    auditoria.registrar(
+        db,
+        "peritos",
+        perito["_id"],
+        "VALIDAR_PERITO",
+        actor,
+        {"anterior": perito["estado_credencial"], "nuevo": nuevo_estado, "documentos_revisados": documentos_revisados},
+    )
+    return actualizado
 
-    if resultado.modified_count > 0:
-        registrar_evento_seguro(
-            log,
-            "PERITOS_VENCIMIENTOS_ACTUALIZADOS",
-            {"cantidad_vencidos": resultado.modified_count},
-            nivel="info",
+
+def marcar_vencidos(db: Database) -> int:
+    """Tarea diaria de n8n: VALIDADO con matrícula vencida pasa a VENCIDO (RNF-15)."""
+    momento = ahora()
+    vencidos = list(
+        db["peritos"].find(
+            {"estado_credencial": "VALIDADO", "vigencia_matricula": {"$ne": None, "$lt": momento}}, {"_id": 1}
         )
-    return resultado.modified_count
+    )
+    for perito in vencidos:
+        db["peritos"].update_one(
+            {"_id": perito["_id"]}, {"$set": {"estado_credencial": "VENCIDO", "actualizado_en": momento}}
+        )
+        auditoria.registrar(
+            db,
+            "peritos",
+            perito["_id"],
+            "VENCER_MATRICULA",
+            auditoria.actor_proceso("n8n"),
+            {"anterior": "VALIDADO", "nuevo": "VENCIDO"},
+        )
+    return len(vencidos)
 
 
-def listar_peritos(
-    db: Database,
-    estado_credencial: str | None = None,
-    saltar: int = 0,
-    limite: int = 50,
-) -> tuple[list[dict[str, Any]], int]:
-    """Lista peritos para gestión administrativa con paginación defensiva."""
-    filtro: dict[str, Any] = {}
-    if estado_credencial:
-        filtro["estado_credencial"] = estado_credencial.strip().upper()
-
-    total = db[COLECCION_PERITOS].count_documents(filtro)
-    cursor = db[COLECCION_PERITOS].find(filtro).skip(saltar).limit(limite).sort("creado_en", -1)
-    return list(cursor), total
+def perito_habilitado(db: Database, perito_id: ObjectId) -> bool:
+    """True solo si el estado es VALIDADO. Lo usa H (RF-49, RNF-14)."""
+    return db["peritos"].count_documents({"_id": perito_id, "estado_credencial": "VALIDADO"}, limit=1) > 0
