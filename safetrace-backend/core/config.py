@@ -62,8 +62,20 @@ class Settings(BaseSettings):
     superadmin_correo: str = os.getenv("SUPERADMIN_CORREO", "")
     superadmin_contrasena: str = os.getenv("SUPERADMIN_CONTRASENA", "")
 
-    # Servicios externos
+    # Proveedor de archivos compatible con S3 (Cloudflare R2, AWS S3 o MinIO en local)
+    # URL del API S3, sin el bucket. R2: https://<cuenta>.r2.cloudflarestorage.com · MinIO: http://localhost:9000
     proveedor_archivos_url: str = os.getenv("PROVEEDOR_ARCHIVOS_URL", "")
+    archivos_bucket: str = os.getenv("ARCHIVOS_BUCKET", "")
+    archivos_access_key: str = os.getenv("ARCHIVOS_ACCESS_KEY", "")
+    archivos_secret_key: str = os.getenv("ARCHIVOS_SECRET_KEY", "")
+    # R2: auto · MinIO: us-east-1 · S3: la región del bucket
+    archivos_region: str = os.getenv("ARCHIVOS_REGION", "auto")
+    archivos_tamano_maximo_mb: int = int(os.getenv("ARCHIVOS_TAMANO_MAXIMO_MB", "10"))
+    # Vigencia de las URL firmadas de subida y de lectura, y tiempo máximo de una descarga del trabajador
+    archivos_segundos_subida: int = int(os.getenv("ARCHIVOS_SEGUNDOS_SUBIDA", "600"))
+    archivos_segundos_lectura: int = int(os.getenv("ARCHIVOS_SEGUNDOS_LECTURA", "900"))
+    archivos_segundos_timeout: int = int(os.getenv("ARCHIVOS_SEGUNDOS_TIMEOUT", "20"))
+
     correo_api_key: str = os.getenv("CORREO_API_KEY", "")
 
 

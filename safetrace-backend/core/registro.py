@@ -9,7 +9,6 @@ en estricto cumplimiento del requerimiento no funcional RNF-20.
 from __future__ import annotations
 
 import logging
-<<<<<<< HEAD
 from contextvars import ContextVar
 
 # ID de la petición en curso; "-" fuera de una petición (arranque, trabajador)
@@ -28,34 +27,6 @@ def _registro_con_request_id(*args, **kwargs) -> logging.LogRecord:
 
 
 logging.setLogRecordFactory(_registro_con_request_id)
-=======
-from collections.abc import Mapping
-from typing import Any
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
-
-# Conjunto de claves sensibles sujetas a filtrado o anonimización estricta (RNF-20)
-CAMPOS_PII_SENSIBLES: frozenset[str] = frozenset({
-    "nombre",
-    "nombre_completo",
-    "documento",
-    "numero_documento",
-    "numero",
-    "correo",
-    "email",
-    "telefono",
-    "celular",
-    "contrasena",
-    "password",
-    "contrasena_hash",
-    "token",
-    "token_hash",
-    "matricula_profesional",
-})
->>>>>>> Brayan
 
 
 def obtener_logger(nombre: str) -> logging.Logger:
