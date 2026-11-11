@@ -6,6 +6,7 @@ Se puede ejecutar varias veces: no duplica ni sobrescribe lo que ya existe (los 
 desde la API se conservan). Si se agrega un módulo nuevo aquí, la próxima ejecución lo crea con sus permisos.
 """
 
+from app.crud.configuracion import ID_PARAMETROS_INDICE, POR_DEFECTO_INDICE
 from app.crud.modulo_permisos import dar_todos_los_permisos
 from app.crud.roles import SUPERADMIN
 from core.config import settings
@@ -14,6 +15,7 @@ from core.fechas import ahora
 from core.security import hash_contrasena
 
 CONFIGURACION = {"_id": "parametros_sismo", "magnitud_minima": 5.0, "radio_afectacion_km": 200}  # RF-11, RF-12
+CONFIGURACION_INDICE = {"_id": ID_PARAMETROS_INDICE, **POR_DEFECTO_INDICE}  # RF-67, provisional
 
 # Lista de ejemplo: la definitiva está pendiente (RF-23)
 ZONAS = [
@@ -161,7 +163,8 @@ def _crear_usuario_inicial(db, correo: str, contrasena: str, rol: str, nombre: s
 
 def cargar(db=None):
     db = db if db is not None else obtener_db()
-    db["configuracion"].update_one({"_id": CONFIGURACION["_id"]}, {"$setOnInsert": CONFIGURACION}, upsert=True)
+    for documento in (CONFIGURACION, CONFIGURACION_INDICE):
+        db["configuracion"].update_one({"_id": documento["_id"]}, {"$setOnInsert": documento}, upsert=True)
     for zona in ZONAS:
         db["zonas"].update_one({"_id": zona["_id"]}, {"$setOnInsert": zona}, upsert=True)
     print(f"ok  configuracion y {len(ZONAS)} zonas")

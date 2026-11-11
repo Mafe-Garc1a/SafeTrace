@@ -569,7 +569,12 @@ Variables (`core/config.py`, plantilla en `.env.example`):
 | `CREDENCIAL_SERVICIO_N8N` | Rutas `/interno/*` | valor inseguro |
 | `SUPERADMIN_CORREO`, `SUPERADMIN_CONTRASENA` | Superadministrador (`db.semillas`) | vacío |
 | `ADMIN_CORREO`, `ADMIN_CONTRASENA` | Primer administrador (`db.semillas`) | vacío |
-| `PROVEEDOR_ARCHIVOS_URL` | Subida de archivos | vacío → 501 |
+| `PROVEEDOR_ARCHIVOS_URL` | API S3 del proveedor de archivos, sin el bucket (R2, S3 o MinIO) | vacío → 501 |
+| `ARCHIVOS_BUCKET`, `ARCHIVOS_ACCESS_KEY`, `ARCHIVOS_SECRET_KEY` | Bucket y credenciales del proveedor | vacío → 501 |
+| `ARCHIVOS_REGION` | Región para la firma: `auto` en R2, `us-east-1` en MinIO | `auto` |
+| `ARCHIVOS_TAMANO_MAXIMO_MB` | Tamaño máximo de una foto o documento | `10` |
+| `ARCHIVOS_SEGUNDOS_SUBIDA`, `ARCHIVOS_SEGUNDOS_LECTURA` | Vigencia de las URL firmadas de subida y de lectura | `600`, `900` |
+| `ARCHIVOS_SEGUNDOS_TIMEOUT` | Tiempo máximo de una descarga del trabajador | `20` |
 | `CORREO_API_KEY` | Correo | vacío → se simula en el log |
 
 **Cálculo de conexiones a MongoDB:** cada proceso `web` y `worker` tiene su propio pool.
@@ -625,9 +630,10 @@ restrínjalo al dominio del frontend.
 
 | Qué | Dónde | Estado actual |
 |---|---|---|
-| Pesos del índice de priorización | `crud/ia_indice.py` → `calcular` | `NotImplementedError`; el marcado por sismo continúa sin índice. Al definirlos, subir `FORMULA_VERSION`. |
+| Pesos definitivos del índice de priorización | `configuracion` → `parametros_indice` (ADR 0014) | Calculado con pesos, ζ, Tₛ y valores por sistema constructivo provisionales. Ajustar los pesos con calificaciones de un perito y subir `formula_version`. Aún no hay endpoint para cambiarlos (con auditoría). |
+| Tendencia de la fisura | `core/modelos_indice.py` → `tasa_crecimiento` | La fórmula existe, pero sin endpoint: necesita que el modelo de IA mida el ancho en mm. |
 | Modelo de comparación de fotos | `crud/ia_indice.py` → `cargar_modelo`, `comparar` | Los análisis fallan tras 3 intentos. Pesos en `modelos_ia/`. Al cambiar de modelo, subir `MODELO_VERSION`. |
-| Proveedor de archivos | `core/almacenamiento.py` | `POST /archivos/autorizacion` responde 501. Al integrarlo, use `httpx.Client` con `timeout` explícito y pase `httpx` a `requirements.in`. |
+| Proveedor de archivos | `core/almacenamiento.py` | Integrado (compatible con S3, ADR 0013). Falta elegir R2 o S3 para producción, crear el bucket y configurar su CORS. Sin variables, responde 501. |
 | Proveedor de correo | `core/email.py` | Sin API key, se simula. Al integrarlo, use `httpx.Client` con `timeout` explícito y pase `httpx` a `requirements.in`. |
 | Criterio SGC/USGS definitivo | `crud/sismos.py` | Propuesta ±2 min y ≤100 km. |
 | Lista definitiva de zonas | `db/semillas.py` | Lista de ejemplo. |
@@ -666,6 +672,9 @@ desde `/admin/permisos`): **P** propietario, **R** perito, **A** administrador g
 | `GET /inmuebles/{id}/linea-cronologica` | S | `bitacora.py` |
 | `POST /archivos/autorizacion` | P, R | `bitacora.py` |
 | `POST /peritos/archivos/autorizacion` | R | `bitacora.py` |
+| `GET /evidencias/{id}/archivo` | S (quien puede ver el inmueble) | `bitacora.py` |
+| `GET /peritos/documentos/{documento_id}/archivo` | R | `peritos.py` |
+| `GET /admin/peritos/{id}/documentos/{documento_id}/archivo` | A | `peritos.py` |
 | `POST /inmuebles/{id}/revisiones` | P | `revisiones.py` |
 | `GET /inmuebles/{id}/revisiones` | S | `revisiones.py` |
 | `POST /interno/recordatorios-semestrales` | N | `revisiones.py` |
@@ -681,7 +690,7 @@ desde `/admin/permisos`): **P** propietario, **R** perito, **A** administrador g
 | `POST /interno/constancias/vencimientos` | N | `inspecciones.py` |
 | `POST /inmuebles/{id}/enlaces` · `GET /inmuebles/{id}/enlaces` · `DELETE /enlaces/{id}` | P | `enlaces.py` |
 | `GET /publico/{codigo}` | — | `enlaces.py` |
-| `GET /inmuebles/{id}/analisis-ia` · `GET /inmuebles/{id}/indice` | S | `ia_indice.py` |
+| `GET /inmuebles/{id}/analisis-ia` · `GET /inmuebles/{id}/indice` · `GET /inmuebles/{id}/indice/modelos` | S | `ia_indice.py` |
 | `POST /analisis-ia/{id}/reintento` | P, A | `ia_indice.py` |
 | `GET /admin/sismos/{id}/priorizacion` | A | `ia_indice.py` |
 | `GET /tareas/{id}` · `GET /notificaciones` | S | `notificaciones.py` |
