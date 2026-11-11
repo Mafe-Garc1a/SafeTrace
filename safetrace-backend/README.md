@@ -68,7 +68,7 @@ safetrace/
 │   ├── security.py              #   bcrypt y tokens JWT (RNF-09, RNF-11)
 │   ├── fechas.py                #   UTC con milisegundos, suma de meses
 │   ├── email.py                 #   correo transaccional (sin proveedor: se simula)
-│   ├── almacenamiento.py        #   proveedor de archivos (pendiente de elegir)
+│   ├── almacenamiento.py        #   proveedor de archivos compatible con S3 (R2, S3 o MinIO)
 │   ├── paginacion.py            #   máximo 50 por página (RNF-30)
 │   ├── errores.py               #   transición de estado rechazada (409)
 │   └── registro.py              #   logs sin datos personales (RNF-20)
@@ -149,9 +149,9 @@ Diferencias con avisena, por lo que pide el diseño:
 
 | Qué | Dónde | Comportamiento actual |
 |---|---|---|
-| Pesos del índice de priorización | `crud/ia_indice.py` → `calcular` | Lanza `NotImplementedError`; el marcado por sismo sigue sin índice. |
+| Pesos definitivos del índice de priorización | `configuracion` → `parametros_indice` | Se calcula con pesos provisionales (ADR 0014). Si el cálculo falla, el marcado por sismo sigue sin índice. |
 | Modelo de comparación de fotos (Colab) | `crud/ia_indice.py` → `cargar_modelo`, `comparar` | El análisis queda PENDIENTE y la tarea falla tras 3 intentos (FALLIDO, se puede reintentar). |
-| Proveedor de archivos | `core/almacenamiento.py` | `POST /archivos/autorizacion` responde 501. Las evidencias se registran con ruta y huella. |
+| Proveedor de archivos | `core/almacenamiento.py` | Integrado y compatible con S3. Sin `PROVEEDOR_ARCHIVOS_URL`, `ARCHIVOS_BUCKET` y claves, la subida y la lectura responden 501. Falta crear el bucket de producción. |
 | Proveedor de correo | `core/email.py` | Sin `CORREO_API_KEY` el envío se simula (se registra en el log). |
 | Criterio para emparejar SGC y USGS | `crud/sismos.py` | Propuesta: ±2 min y ≤ 100 km; prevalece la magnitud del SGC. |
 | Lista definitiva de zonas | `db/semillas.py` | Lista de ejemplo. |

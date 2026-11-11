@@ -8,11 +8,16 @@ from bson import ObjectId
 
 from tests.conftest import CONTRASENA, N8N, iniciar_sesion, registrar
 
-FOTO = {
-    "tipo_archivo": "FOTO",
-    "zona_id": "MURO_SALA",
-    "archivo": {"ruta": "inmuebles/x/f1.jpg", "hash_sha256": "a" * 64},
-}
+
+def foto(inmueble_id: str) -> dict:
+    """Foto con la ruta que entrega POST /archivos/autorizacion para ese inmueble."""
+    return {
+        "tipo_archivo": "FOTO",
+        "zona_id": "MURO_SALA",
+        "archivo": {"ruta": f"inmuebles/{inmueble_id}/2026/08/10180000000000.jpg", "hash_sha256": "a" * 64},
+    }
+
+
 SISMO = {
     "fuente": "SGC",
     "id_externo": "SGC2026tbcd",
@@ -35,7 +40,8 @@ def perito_validado(cliente, admin) -> tuple[dict, str]:
     }
     perito = cliente.post("/peritos/perfil", json=perfil, headers=cabecera).json()
     assert perito["estado_credencial"] == "REGISTRADO"
-    documentos = {"documentos": [{"tipo": "MATRICULA", "archivo": {"ruta": "peritos/m.pdf", "hash_sha256": "b" * 64}}]}
+    ruta = f"peritos/{perito['id']}/20261001120000000000.pdf"
+    documentos = {"documentos": [{"tipo": "MATRICULA", "archivo": {"ruta": ruta, "hash_sha256": "b" * 64}}]}
     assert cliente.post("/peritos/documentos", json=documentos, headers=cabecera).json()["estado_credencial"] == (
         "PENDIENTE_VALIDACION"
     )
@@ -90,13 +96,15 @@ def test_escenario_completo(cliente, db, admin, propietario, inmueble):
         "zona_id": "MURO_SALA",
     }
     evento_id = cliente.post(f"/inmuebles/{inmueble_id}/eventos", json=evento, headers=propietario).json()["id"]
-    r = cliente.post(f"/inmuebles/{inmueble_id}/evidencias", json={**FOTO, "evento_id": evento_id}, headers=propietario)
+    r = cliente.post(
+        f"/inmuebles/{inmueble_id}/evidencias", json={**foto(inmueble_id), "evento_id": evento_id}, headers=propietario
+    )
     assert r.status_code == 201
     revision = {
         "observaciones": "La fisura creció",
         "hubo_cambios": True,
         "solicitara_inspeccion": True,
-        "fotos": [FOTO],
+        "fotos": [foto(inmueble_id)],
     }
     r = cliente.post(f"/inmuebles/{inmueble_id}/revisiones", json=revision, headers=propietario)
     assert r.status_code == 201 and r.json()["cambio_estado_aplicado"] is True
