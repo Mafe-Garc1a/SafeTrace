@@ -1,0 +1,11 @@
+{
+  "name": "SafeTrace",
+  "short_name": "SafeTrace",
+  "description": "Historia clínica verificable del inmueble.",
+  "lang": "es-CO",
+  "start_url": "/inicio",
+  "display": "standalone",
+  "background_color": "#E4EEF8",
+  "theme_color": "#1F5BAA",
+  "icons": [{ "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
